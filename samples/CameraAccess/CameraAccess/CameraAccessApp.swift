@@ -56,10 +56,18 @@ struct VisionRootView: View {
   /// `-openSettings` presents Settings at launch, so screens can be captured
   /// on a simulator with no GUI to tap through.
   @State private var showSettings = ProcessInfo.processInfo.arguments.contains("-openSettings")
-  /// Builds ship without a gateway token (it is per-person identity), so an
-  /// install with none configured sees only the access-code gate.
-  @State private var needsAccessCode =
-    SettingsManager.shared.agentBackend == .cloud && !GeminiConfig.isAgentConfigured
+  /// Upstream gates first launch behind an access code for the OpenClaw
+  /// gateway, because that is how VisionClaw reaches its agent.
+  ///
+  /// This build has no agent to reach. James is the backend, and he is fed by
+  /// JamesEye posting frames straight to his dashboard — nothing here ever
+  /// talks to the gateway. So the gate demands a credential for a service
+  /// that is never used, and it cannot be dismissed on a device: it renders
+  /// INSTEAD of the root view, and Settings is only reachable behind a launch
+  /// argument meant for the simulator.
+  ///
+  /// Skipped rather than deleted, so the upstream code stays easy to diff.
+  @State private var needsAccessCode = false
 
   var body: some View {
     Group {
