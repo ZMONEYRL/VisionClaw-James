@@ -1,0 +1,88 @@
+# Builds a sideloadable VisionClaw for James, on GitHub's free macOS runners.
+#
+# The point of this file: Xcode only runs on macOS, and there isn't a Mac
+# here. GitHub's macOS runners are free on public repositories, so the build
+# happens there and the .ipa comes back as an artifact to sideload with
+# SideStore or AltStore using a free Apple ID.
+#
+# The .ipa is deliberately UNSIGNED. SideStore re-signs it with your own Apple
+# ID at install time, so a signature applied here would only be thrown away —
+# and doing it properly would need a paid Apple Developer account.
+#
+# Before the first run, add two repository secrets (Settings → Secrets and
+# variables → Actions):
+#   JAMES_URL  https://james-pc.tail05b54b.ts.net/api/camera/frame
+#   JAMES_KEY  the key from dashboard_config.json
+# They are injected at build time so neither is ever committed. Do not put
+# them in the source instead — this repo has to be public for the runners to
+# be free, and the key is what stands between the open internet and a machine
+# that can talk to James.
+
+name: Build James IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fill in the secrets the app was built without
+        env:
+          JAMES_URL: ${{ secrets.JAMES_URL }}
+          JAMES_KEY: ${{ secrets.JAMES_KEY }}
+        run: |
+          cd samples/CameraAccess/CameraAccess
+          # VisionClaw's own pattern: a Secrets file kept out of git.
+          [ -f Secrets.swift ] || cp Secrets.swift.example Secrets.swift
+          # The James endpoint and key live as placeholders in the view model
+          # so that no new file has to be added to the Xcode project.
+          python3 - "$JAMES_URL" "$JAMES_KEY" <<'PY'
+          import pathlib, sys
+          url, key = sys.argv[1], sys.argv[2]
+          if not url or not key:
+              raise SystemExit("JAMES_URL and JAMES_KEY must both be set as repo secrets")
+          p = pathlib.Path("ViewModels/StreamSessionViewModel.swift")
+          s = p.read_text()
+          for placeholder, value in (("__JAMES_URL__", url), ("__JAMES_KEY__", key)):
+              if placeholder not in s:
+                  raise SystemExit(f"{placeholder} not found — did the patch get lost?")
+              s = s.replace(placeholder, value)
+          p.write_text(s)
+          print("endpoint and key injected")
+          PY
+
+      - name: Build (unsigned)
+        run: |
+          cd samples/CameraAccess
+          xcodebuild \
+            -project CameraAccess.xcodeproj \
+            -scheme CameraAccess \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+      - name: Wrap it as an .ipa
+        run: |
+          cd samples/CameraAccess/build/Build/Products/Release-iphoneos
+          # An .ipa is a zip with the .app inside a folder called Payload.
+          # That is the whole format; there is nothing else to it.
+          mkdir -p Payload
+          cp -R CameraAccess.app Payload/
+          zip -qry VisionClaw-James.ipa Payload
+          ls -lh VisionClaw-James.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VisionClaw-James-ipa
+          path: samples/CameraAccess/build/Build/Products/Release-iphoneos/VisionClaw-James.ipa
+          if-no-files-found: error

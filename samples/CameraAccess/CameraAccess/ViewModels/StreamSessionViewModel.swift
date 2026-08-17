@@ -128,6 +128,9 @@ class StreamSessionViewModel: ObservableObject {
         let rect = CGRect(x: 0, y: 0, width: width, height: height)
         if let cgImage = self.cpuCIContext.createCGImage(ciImage, from: rect) {
           let image = UIImage(cgImage: cgImage)
+          // The decoded background path — James keeps seeing while the phone
+          // is in a pocket, which is the whole point of glasses.
+          JamesEye.shared.offer(image)
           if self.backgroundFrameCount <= 5 || self.backgroundFrameCount % 120 == 0 {
             NSLog("[Stream] Background frame #%d decoded and forwarded (%dx%d)",
                   self.backgroundFrameCount, width, height)
@@ -174,6 +177,7 @@ class StreamSessionViewModel: ObservableObject {
           self.bgDiagLogged = false
           if let image = videoFrame.makeUIImage() {
             self.currentVideoFrame = image
+            JamesEye.shared.offer(image)
             if !self.hasReceivedFirstFrame {
               self.hasReceivedFirstFrame = true
             }
@@ -205,7 +209,7 @@ class StreamSessionViewModel: ObservableObject {
             let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
             let rect = CGRect(x: 0, y: 0, width: width, height: height)
             if let cgImage = self.cpuCIContext.createCGImage(ciImage, from: rect) {
-              let image = UIImage(cgImage: cgImage)
+              JamesEye.shared.offer(UIImage(cgImage: cgImage))
             }
             self.videoDecoder.invalidateSession()
           }
@@ -289,6 +293,10 @@ class StreamSessionViewModel: ObservableObject {
   }
 
   func startSession() async {
+    // Forwarding follows the stream: this build exists to give James eyes, so
+    // starting the glasses starts the sending. The real off-switch is the
+    // config — with no endpoint compiled in, JamesEye never sends anything.
+    JamesEye.shared.isEnabled = true
     await streamSession?.start()
   }
 
@@ -298,6 +306,7 @@ class StreamSessionViewModel: ObservableObject {
   }
 
   func stopSession() async {
+    JamesEye.shared.isEnabled = false
     await streamSession?.stop()
   }
 
@@ -349,5 +358,77 @@ class StreamSessionViewModel: ObservableObject {
     @unknown default:
       return "An unknown streaming error occurred."
     }
+  }
+}
+
+// MARK: - James
+
+/// Sends what the glasses see to James.
+///
+/// James already has the eye: his dashboard accepts a raw JPEG on
+/// POST /api/camera/frame, writes it atomically to camera-latest.jpg, and
+/// treats anything under 8 seconds old as "what Zee is looking at right now".
+/// So there is very little to do here — throttle, encode, post, forget.
+///
+/// Deliberately no queue and no retries. A frame that failed to send is
+/// already stale, and the next one is a second behind it; a backlog of old
+/// frames arriving late is strictly worse than a gap.
+///
+/// This lives at the bottom of an existing file on purpose. Adding a new
+/// Swift file means editing project.pbxproj by hand, which is UUID-keyed and
+/// unverifiable without opening Xcode — a needless way to break the build.
+@MainActor
+final class JamesEye {
+  static let shared = JamesEye()
+
+  // Filled in by CI from repository secrets, so the key never lands in git.
+  // To run a local build, put your own values here.
+  static let endpoint = "__JAMES_URL__"
+  static let key = "__JAMES_KEY__"
+
+  /// One frame a second — comfortably inside James's 8-second freshness
+  /// window, and far short of writing a video feed into a vault folder.
+  private let interval: TimeInterval = 1.0
+  /// JPEG quality. VisionClaw sends Gemini 50%; James's endpoint caps a frame
+  /// at 12MB, so this is about bandwidth over a phone link, not the limit.
+  private let quality: CGFloat = 0.5
+
+  private var lastSent = Date.distantPast
+  private var inFlight = false
+
+  /// Set while a glasses stream is running, cleared when it stops.
+  var isEnabled = false
+
+  private var url: URL? {
+    guard !Self.endpoint.hasPrefix("__"), !Self.endpoint.isEmpty else { return nil }
+    return URL(string: Self.endpoint)
+  }
+
+  func offer(_ image: UIImage) {
+    guard isEnabled, !inFlight, let url else { return }
+    let now = Date()
+    guard now.timeIntervalSince(lastSent) >= interval else { return }
+    guard let jpeg = image.jpegData(compressionQuality: quality) else { return }
+
+    lastSent = now
+    inFlight = true
+
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+    request.setValue(Self.key, forHTTPHeaderField: "X-James-Key")
+    // Shorter than the send interval: a request still hanging when the next
+    // frame is due is a request worth abandoning.
+    request.timeoutInterval = 0.9
+
+    URLSession.shared.uploadTask(with: request, from: jpeg) { _, response, error in
+      Task { @MainActor in JamesEye.shared.inFlight = false }
+      if let error {
+        NSLog("[James] frame not sent: %@", error.localizedDescription)
+      } else if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+        // 403 here means the key is wrong or lan_access is off on the PC.
+        NSLog("[James] frame refused: HTTP %d", http.statusCode)
+      }
+    }.resume()
   }
 }
