@@ -1,0 +1,73 @@
+# Builds Meta's OWN unmodified DAT sample, as a control.
+#
+# Why this exists: we cannot tell whether the glasses fail to connect because
+# of VisionClaw's modifications, or because of something about this Apple
+# account / device / Meta app registration. VisionClaw drags in LiveKit, a
+# cloud gateway, Gemini and an access-code gate, none of which we use, and
+# each of which has already cost a debugging round.
+#
+# This target is the opposite: 24 Swift files, no API keys, no gateway, no
+# account of any kind. Just glasses and a camera. It also links
+# MWDATMockDevice, which VisionClaw does not — so it has the ladybug button
+# and can be tested with a SIMULATED device before real hardware is involved.
+#
+# Reading the result:
+#   mock device streams          -> the SDK, the app and the phone are fine
+#   real glasses also connect    -> VisionClaw's fork was the problem; port
+#                                   JamesEye into this much smaller app
+#   real glasses still fail      -> Meta app registration is genuinely
+#                                   required, and no code change will help
+
+name: Build Baseline IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'baseline/**'
+      - '.github/workflows/baseline-ipa.yml'
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (unsigned)
+        env:
+          # Optional. Empty is the honest default here: this build's whole
+          # purpose is to test whether Developer Mode alone is sufficient.
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          CLIENT_TOKEN: ${{ secrets.META_CLIENT_TOKEN }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          cd baseline/CameraAccess
+          xcodebuild \
+            -project CameraAccess.xcodeproj \
+            -scheme CameraAccess \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            META_APP_ID="$META_APP_ID" \
+            CLIENT_TOKEN="$CLIENT_TOKEN" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+      - name: Wrap it as an .ipa
+        run: |
+          cd baseline/CameraAccess/build/Build/Products/Release-iphoneos
+          mkdir -p Payload
+          cp -R CameraAccess.app Payload/
+          zip -qry Baseline-CameraAccess.ipa Payload
+          ls -lh Baseline-CameraAccess.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Baseline-CameraAccess-ipa
+          path: baseline/CameraAccess/build/Build/Products/Release-iphoneos/Baseline-CameraAccess.ipa
+          if-no-files-found: error
