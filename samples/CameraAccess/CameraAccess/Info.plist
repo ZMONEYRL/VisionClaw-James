@@ -53,6 +53,11 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<!-- bluetooth-central: this app is the CENTRAL that connects OUT to the
+		     glasses. Only bluetooth-peripheral was declared, which is the
+		     opposite BLE role, so background connections had no entitlement to
+		     run under. Required by Meta's iOS integration guide. -->
+		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>
 		<string>external-accessory</string>
 	</array>
@@ -60,6 +65,15 @@
 	<string>Needed to connect to Meta AI Glasses</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>To listen to audio from Meta AI Glasses</string>
+	<!-- The glasses stream over the local network once paired, and iOS blocks
+	     that silently when these two are missing: no prompt, no error, the
+	     session just never establishes. Both are required by Meta's guide. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Needed to stream video from Meta AI Glasses over Wi-Fi</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_bonjour._tcp</string>
+	</array>
 	<key>UISupportedExternalAccessoryProtocols</key>
 	<array>
 		<string>com.meta.ar.wearable</string>
