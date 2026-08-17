@@ -35,6 +35,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The runner defaults to an older Xcode, and Meta's CURRENT sample needs
+      # a newer toolchain than VisionClaw's fork does: it uses `isolated
+      # deinit` (only stable in a later Swift) and AVAudioSession's
+      # `allowBluetoothHFP` (the iOS 26 SDK rename of `allowBluetooth`).
+      # Both fail to compile on Xcode 16.4 with errors that look like broken
+      # code rather than a stale toolchain.
+      - name: Use the newest Xcode on the runner
+        run: |
+          echo "available:"
+          ls -d /Applications/Xcode*.app
+          NEWEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "selecting $NEWEST"
+          sudo xcode-select -s "$NEWEST/Contents/Developer"
+          xcodebuild -version
+
       - name: Build (unsigned)
         env:
           # Optional. Empty is the honest default here: this build's whole
