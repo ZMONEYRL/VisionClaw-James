@@ -11,8 +11,10 @@
 #
 # Before the first run, add two repository secrets (Settings → Secrets and
 # variables → Actions):
-#   JAMES_URL  https://james-pc.tail05b54b.ts.net/api/camera/frame
+#   JAMES_URL  https://<your-machine>.<your-tailnet>.ts.net/api/camera/frame
 #   JAMES_KEY  the key from dashboard_config.json
+# Both are secrets rather than one being a plain variable: the URL names your
+# machine and your tailnet, which is nobody else's business either.
 # They are injected at build time so neither is ever committed. Do not put
 # them in the source instead — this repo has to be public for the runners to
 # be free, and the key is what stands between the open internet and a machine
