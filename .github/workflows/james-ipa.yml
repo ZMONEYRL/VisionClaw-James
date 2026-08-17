@@ -60,14 +60,36 @@ jobs:
           PY
 
       - name: Build (unsigned)
+        env:
+          # From the Wearables Developer Center. Info.plist references these as
+          # $(META_APP_ID) / $(CLIENT_TOKEN), so passing them as build settings
+          # substitutes them at compile time and nothing secret is committed.
+          #
+          # Meta's docs say attestation is skipped in Developer Mode, which is
+          # why the app built at all with these empty. Registration failed
+          # anyway, so we stop relying on that and configure them properly.
+          META_APP_ID: ${{ secrets.META_APP_ID }}
+          CLIENT_TOKEN: ${{ secrets.META_CLIENT_TOKEN }}
+          # The team that actually signs the app. Sideloadly re-signs with your
+          # personal team, so the value baked in must be YOURS, not the
+          # upstream author's - that mismatch is one of the things DAT checks.
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           cd samples/CameraAccess
+          for v in META_APP_ID CLIENT_TOKEN APPLE_TEAM_ID; do
+            if [ -z "${!v}" ]; then
+              echo "::warning::$v is empty - DAT registration will rely on Developer Mode"
+            fi
+          done
           xcodebuild \
             -project CameraAccess.xcodeproj \
             -scheme CameraAccess \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
+            META_APP_ID="$META_APP_ID" \
+            CLIENT_TOKEN="$CLIENT_TOKEN" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
